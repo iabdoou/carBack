@@ -803,7 +803,7 @@ export class AdminService {
         trims: {
           include: {
             supplierOffers: {
-              where: status ? { status } : {},
+              where: status ? { status: status as any } : {},
               include: {
                 supplier: { select: { id: true, name: true, email: true } },
               },
@@ -823,7 +823,7 @@ export class AdminService {
     let totalOffers = 0;
     
     for (const trim of vehicleModel.trims) {
-      for (const offer of trim.supplierOffers) {
+      for (const offer of (trim.supplierOffers ?? [])) {
         uniqueSupplierIds.add(offer.supplierId);
         totalOffers++;
       }
@@ -834,16 +834,13 @@ export class AdminService {
 
     return {
       vehicleModel: {
-        id: vehicleModel.id,
-        brand: vehicleModel.brand,
-        model: vehicleModel.model,
-        year: vehicleModel.year,
+        ...vehicleModel,
         imageUrl,
       },
       totalOffers,
       uniqueSuppliers: uniqueSupplierIds.size,
       trims: vehicleModel.trims
-        .filter(t => t.supplierOffers.length > 0)
+        .filter(t => (t.supplierOffers?.length ?? 0) > 0)
         .map(trim => ({
           trim: {
             id: trim.id,
@@ -851,7 +848,7 @@ export class AdminService {
             imageUrl: trim.imageUrl,
             options: trim.options,
           },
-          offers: trim.supplierOffers,
+          offers: trim.supplierOffers ?? [],
         })),
     };
   }

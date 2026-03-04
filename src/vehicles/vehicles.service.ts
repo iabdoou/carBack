@@ -58,51 +58,5 @@ export class VehiclesService {
     return vehicle;
   }
 
-  async create(data: any) {
-    return this.prisma.vehicle.create({
-      data,
-      include: {
-        media: true,
-      },
-    });
-  }
-
-  async update(id: string, data: any) {
-    await this.findById(id);
-
-    return this.prisma.vehicle.update({
-      where: { id },
-      data,
-      include: {
-        media: true,
-      },
-    });
-  }
-
-  async delete(id: string) {
-    await this.findById(id);
-
-    return this.prisma.vehicle.delete({
-      where: { id },
-    });
-  }
-
-  async addMedia(vehicleId: string, data: { url: string; type: string; orderIndex: number }) {
-    await this.findById(vehicleId);
-
-    return this.prisma.vehicleMedia.create({
-      data: {
-        vehicleId,
-        url: data.url,
-        type: data.type as any,
-        orderIndex: data.orderIndex,
-      },
-    });
-  }
-
-  async removeMedia(mediaId: string) {
-    return this.prisma.vehicleMedia.delete({
-      where: { id: mediaId },
-    });
-  }
+  // ...existing code...
 }

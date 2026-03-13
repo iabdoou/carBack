@@ -90,6 +90,48 @@ export class AdminController {
     return this.adminService.deleteBuyer(id);
   }
 
+
+  // ============ SUPPLIER MANAGEMENT ============
+
+  @Post('users/supplier')
+  @ApiOperation({ summary: 'Create a new supplier (admin only)' })
+  @ApiResponse({ status: 201, description: 'Supplier created' })
+  @ApiResponse({ status: 409, description: 'Email already registered' })
+  async createSupplier(@Body() dto: CreateBuyerDto) {
+    return this.adminService.createSupplier(dto);
+  }
+
+  @Get('users/suppliers')
+  @ApiOperation({ summary: 'Get all suppliers' })
+  @ApiResponse({ status: 200, description: 'List of suppliers' })
+  async getAllSuppliers() {
+    return this.adminService.getAllSuppliers();
+  }
+
+  @Get('users/suppliers/:id')
+  @ApiOperation({ summary: 'Get supplier by ID' })
+  @ApiResponse({ status: 200, description: 'Supplier details with orders' })
+  @ApiResponse({ status: 404, description: 'Supplier not found' })
+  async getSupplier(@Param('id') id: string) {
+    return this.adminService.getSupplier(id);
+  }
+
+  @Put('users/suppliers/:id')
+  @ApiOperation({ summary: 'Update supplier' })
+  @ApiResponse({ status: 200, description: 'Supplier updated' })
+  @ApiResponse({ status: 404, description: 'Supplier not found' })
+  async updateSupplier(@Param('id') id: string, @Body() dto: UpdateBuyerDto) {
+    return this.adminService.updateSupplier(id, dto);
+  }
+
+  @Delete('users/suppliers/:id')
+  @ApiOperation({ summary: 'Delete supplier' })
+  @ApiResponse({ status: 200, description: 'Supplier deleted' })
+  @ApiResponse({ status: 404, description: 'Supplier not found' })
+  async deleteSupplier(@Param('id') id: string) {
+    return this.adminService.deleteSupplier(id);
+  }
+
   // ============ VEHICLE MODELS ============
 
   @Post('vehicle-models')

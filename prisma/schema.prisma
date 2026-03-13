@@ -1,0 +1,170 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============ ENUMS ============
+
+enum Role {
+  ADMIN
+  SUPPLIER
+  BUYER
+}
+
+enum ListingMode {
+  IN_STOCK
+  ON_ORDER
+  IN_TRANSIT
+}
+
+enum ListingStatus {
+  ACTIVE
+  INACTIVE
+  OUT_OF_STOCK
+}
+
+enum OfferStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum OrderStatus {
+  CREATED
+  CONFIRMED
+  IN_TRANSIT
+  ARRIVED
+  READY
+  DELIVERED
+  CANCELLED
+}
+
+enum MovementType {
+  ADD
+  RESERVE
+  RELEASE
+  SOLD
+  ADJUST
+}
+
+// ============ MODELS ============
+
+model User {
+  id                    String   @id @default(uuid())
+  name                  String
+  email                 String   @unique
+  phone                 String?
+  containerTrackingCode String?
+  passwordHash          String
+  role                  Role
+  createdAt             DateTime @default(now())
+
+  // Relations
+  orders         Order[]
+  supplierOffers SupplierOffer[]
+  refreshTokens  RefreshToken[]
+}
+
+model RefreshToken {
+  id        String   @id @default(uuid())
+  token     String   @unique
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+}
+
+model VehicleModel {
+  id        String   @id @default(uuid())
+  brand     String
+  model     String
+  year      Int
+  createdAt DateTime @default(now())
+
+  trims Trim[]
+}
+
+model Trim {
+  id             String       @id @default(uuid())
+  name           String
+  imageUrl       String?
+  options        String[]     @default([])
+  vehicleModelId String
+  vehicleModel   VehicleModel @relation(fields: [vehicleModelId], references: [id], onDelete: Cascade)
+  createdAt      DateTime     @default(now())
+
+  listings       Listing[]
+  supplierOffers SupplierOffer[]
+}
+
+model SupplierOffer {
+  id            String      @id @default(uuid())
+  supplierId    String
+  supplier      User        @relation(fields: [supplierId], references: [id])
+  trimId        String
+  trim          Trim        @relation(fields: [trimId], references: [id])
+  mode          ListingMode
+  proposedPrice Float
+  quantity      Int
+  shipmentDate  DateTime?
+  arrivalDate   DateTime?
+  status        OfferStatus @default(PENDING)
+  createdAt     DateTime    @default(now())
+}
+
+model Listing {
+  id               String        @id @default(uuid())
+  trimId           String
+  trim             Trim          @relation(fields: [trimId], references: [id])
+  mode             ListingMode
+  publicPrice      Float
+  totalQuantity    Int
+  reservedQuantity Int           @default(0)
+  status           ListingStatus @default(ACTIVE)
+  createdAt        DateTime      @default(now())
+
+  orders    Order[]
+  movements InventoryMovement[]
+}
+
+model InventoryMovement {
+  id        String       @id @default(uuid())
+  listingId String
+  listing   Listing      @relation(fields: [listingId], references: [id])
+  type      MovementType
+  quantity  Int
+  reason    String?
+  createdAt DateTime     @default(now())
+}
+
+model Order {
+  id         String      @id @default(uuid())
+  buyerId    String
+  buyer      User        @relation(fields: [buyerId], references: [id])
+  listingId  String
+  listing    Listing     @relation(fields: [listingId], references: [id])
+  quantity   Int
+  status     OrderStatus @default(CREATED)
+  finalPrice Float
+  createdAt  DateTime    @default(now())
+  containerTrackingCode String? @default("EGSU6241911")
+  lastTrackedTime DateTime?
+  trackedData Json?
+  
+
+  tracking TrackingEvent[]
+}
+
+model TrackingEvent {
+  id        String   @id @default(uuid())
+  orderId   String
+  order     Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  title     String
+  step      Int
+  containerTrackingCode String? @default("EGSU6241911")
+  eventDate DateTime @default(now())
+}

@@ -221,6 +221,12 @@ export class CreateOrderDto {
   @IsNumber()
   @Type(() => Number)
   finalPrice: number;
+
+  @ApiPropertyOptional({ example: 'TGHU1234567' })
+  @IsOptional()
+  @IsString()
+  trackingNumber?: string;
+
 }
 
 export class UpdateOrderStatusDto {

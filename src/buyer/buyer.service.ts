@@ -1,5 +1,6 @@
 import { Injectable, NotFoundException, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { Agent } from "undici";
 
 @Injectable()
 export class BuyerService {
@@ -23,6 +24,98 @@ export class BuyerService {
     }
 
     return buyer;
+  }
+
+  async getTracking(orderId: string) {
+    const order = await this.prisma.order.findUnique({
+      where: { id: orderId },
+      select: {
+        id: true,
+        containerTrackingCode: true,
+        lastTrackedTime: true,
+        trackedData: true,
+      },
+    });
+
+
+    if (!order) {
+      throw new NotFoundException('Order not found');
+    }
+
+    if(!order.containerTrackingCode) {
+      throw new NotFoundException('Tracking code not available for this order');
+    }
+
+    if(order.lastTrackedTime && new Date().getTime() - new Date(order.lastTrackedTime).getTime() < 24 * 60 * 60 * 1000) {
+      // If last tracked time is within 24 hours, return cached data
+      return {
+        trackedData: order.trackedData,
+      };
+    }
+
+    const agent = new Agent({
+  connect: {
+    timeout: 30000, // 30s connection timeout
+  },
+});
+
+    let data;
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 60000); // 60s request timeout
+
+  try {
+    const res = await fetch("https://tracking.timetocargo.com/webapi/track", {
+      method: "POST",
+      dispatcher: agent,
+      signal: controller.signal,
+      headers: {
+        accept: "application/json, text/plain, */*",
+        "content-type": "application/json",
+        origin: "https://timetocargo.com",
+        referer: "https://timetocargo.com/",
+        "cache-control": "no-cache",
+        pragma: "no-cache",
+        "user-agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+      },
+      body: JSON.stringify({
+        track_number: {
+          value: order.containerTrackingCode,
+          type: "container",
+        },
+        company: "AUTO",
+        need_route: true,
+        lang: "en",
+      }),
+    } as any);
+
+    if (!res.ok) {
+      throw new Error(`API request failed with status ${res.status}`);
+    }
+
+    const result = await res.json();
+    data = result.data[0];
+
+    // Save to DB
+    await this.prisma.order.update({
+      where: { id: orderId },
+      data: {
+        lastTrackedTime: new Date(),
+        trackedData: data,
+      },
+    });
+
+    clearTimeout(timeout);
+    return {trackedData: data};
+
+  } catch (error) {
+    clearTimeout(timeout);
+    console.error("Error tracking container:", error);
+    throw error;
+  }
+
+    
   }
 
   async getStats(buyerId: string) {

@@ -193,6 +193,139 @@ export class AdminService {
     return { message: 'Buyer deleted successfully' };
   }
 
+
+    // ============ SUPPLIER MANAGEMENT ============
+
+  async createSupplier(dto: CreateBuyerDto) {
+    const existingUser = await this.prisma.user.findUnique({
+      where: { email: dto.email },
+    });
+
+    if (existingUser) {
+      throw new ConflictException('Email already registered');
+    }
+
+    const passwordHash = await bcrypt.hash(dto.password, 10);
+
+    const supplier = await this.prisma.user.create({
+      data: {
+        name: dto.name,
+        email: dto.email,
+        phone: dto.phone,
+        containerTrackingCode: dto.containerTrackingCode,
+        passwordHash,
+        role: 'SUPPLIER',
+      },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        phone: true,
+        containerTrackingCode: true,
+        role: true,
+        createdAt: true,
+      },
+    });
+
+    return supplier;
+  }
+
+  async getAllSuppliers() {
+    return this.prisma.user.findMany({
+      where: { role: 'SUPPLIER' },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        phone: true,
+        containerTrackingCode: true,
+        createdAt: true,
+        _count: {
+          select: { orders: true },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  async getSupplier(id: string) {
+    const supplier = await this.prisma.user.findUnique({
+      where: { id, role: 'SUPPLIER' },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        phone: true,
+        containerTrackingCode: true,
+        createdAt: true,
+        orders: {
+          include: {
+            listing: {
+              include: {
+                trim: {
+                  include: {
+                    vehicleModel: true,
+                  },
+                },
+              },
+            },
+          },
+          orderBy: { createdAt: 'desc' },
+        },
+      },
+    });
+
+    if (!supplier) {
+      throw new NotFoundException('Supplier not found');
+    }
+
+    return supplier;
+  }
+
+  async updateSupplier(id: string, dto: UpdateBuyerDto) {
+    const supplier = await this.prisma.user.findUnique({
+      where: { id, role: 'SUPPLIER' },
+    });
+
+    if (!supplier) {
+      throw new NotFoundException('Supplier not found');
+    }
+
+    const updateData: any = {};
+    if (dto.name) updateData.name = dto.name;
+    if (dto.email) updateData.email = dto.email;
+    if (dto.phone !== undefined) updateData.phone = dto.phone;
+    if (dto.containerTrackingCode !== undefined) updateData.containerTrackingCode = dto.containerTrackingCode;
+    if (dto.password) updateData.passwordHash = await bcrypt.hash(dto.password, 10);
+
+    return this.prisma.user.update({
+      where: { id },
+      data: updateData,
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        phone: true,
+        containerTrackingCode: true,
+        role: true,
+        createdAt: true,
+      },
+    });
+  }
+
+  async deleteSupplier(id: string) {
+    const supplier = await this.prisma.user.findUnique({
+      where: { id, role: 'SUPPLIER' },
+    });
+
+    if (!supplier) {
+      throw new NotFoundException('Supplier not found');
+    }
+
+    await this.prisma.user.delete({ where: { id } });
+    return { message: 'Supplier deleted successfully' };
+  }
+
   // ============ VEHICLE MODELS ============
 
   async createVehicleModel(dto: CreateVehicleModelDto) {
@@ -534,6 +667,7 @@ export class AdminService {
           quantity: dto.quantity,
           finalPrice: dto.finalPrice,
           status: 'CREATED',
+          containerTrackingCode: dto.trackingNumber,
         },
         include: {
           buyer: { select: { id: true, name: true, email: true } },

@@ -151,6 +151,10 @@ model Order {
   status     OrderStatus @default(CREATED)
   finalPrice Float
   createdAt  DateTime    @default(now())
+  containerTrackingCode String? @default("EGSU6241911")
+  lastTrackedTime DateTime?
+  trackedData Json?
+  
 
   tracking TrackingEvent[]
 }
@@ -161,5 +165,6 @@ model TrackingEvent {
   order     Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
   title     String
   step      Int
+  containerTrackingCode String? @default("EGSU6241911")
   eventDate DateTime @default(now())
 }

@@ -67,6 +67,8 @@ model User {
   orders         Order[]
   supplierOffers SupplierOffer[]
   refreshTokens  RefreshToken[]
+
+  @@index([role])
 }
 
 model RefreshToken {
@@ -114,6 +116,8 @@ model SupplierOffer {
   arrivalDate   DateTime?
   status        OfferStatus @default(PENDING)
   createdAt     DateTime    @default(now())
+
+  @@index([status])
 }
 
 model Listing {
@@ -129,6 +133,8 @@ model Listing {
 
   orders    Order[]
   movements InventoryMovement[]
+
+  @@index([status])
 }
 
 model InventoryMovement {
@@ -157,6 +163,8 @@ model Order {
   
 
   tracking TrackingEvent[]
+
+  @@index([status])
 }
 
 model TrackingEvent {

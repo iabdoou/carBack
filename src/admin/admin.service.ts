@@ -25,7 +25,7 @@ export class AdminService {
   constructor(
     private prisma: PrismaService,
     private wsGateway: WebsocketGateway,
-  ) {}
+  ) { }
 
   // ============ DASHBOARD STATS ============
 
@@ -194,7 +194,7 @@ export class AdminService {
   }
 
 
-    // ============ SUPPLIER MANAGEMENT ============
+  // ============ SUPPLIER MANAGEMENT ============
 
   async createSupplier(dto: CreateBuyerDto) {
     const existingUser = await this.prisma.user.findUnique({
@@ -713,18 +713,41 @@ export class AdminService {
 
     return this.prisma.order.findMany({
       where,
-      include: {
+      select: {
         buyer: { select: { id: true, name: true, email: true } },
-        listing: {
-          include: {
-            trim: { include: { vehicleModel: true } },
+        finalPrice: true,
+        id: true,
+        listing: { select: { id: true, mode: true, status: true,
+            trim: { 
+              select: {
+                id: true,
+                name: true,
+                vehicleModel: {
+                  select: {
+                    id: true,
+                    brand: true,
+                    model: true,
+                  }
+                }
+              }
+             },
+         } },
+        status: true,
+        quantity: true,
+        tracking: {
+          select: {
+            id: true,
+            title: true,
           },
+          orderBy: { step: 'asc' }
         },
-        tracking: { orderBy: { step: 'asc' } },
+        
       },
+      
       orderBy: { createdAt: 'desc' },
     });
   }
+ 
 
   async getOrder(id: string) {
     const order = await this.prisma.order.findUnique({
@@ -904,7 +927,7 @@ export class AdminService {
     for (const offer of offers) {
       const vehicleModelId = offer.trim.vehicleModelId;
       const existing = groupedMap.get(vehicleModelId);
-      
+
       if (existing) {
         existing.totalOffers++;
         if (offer.status === 'PENDING') existing.pendingCount++;
@@ -924,7 +947,7 @@ export class AdminService {
       }
     }
 
-    return Array.from(groupedMap.values()).sort((a, b) => 
+    return Array.from(groupedMap.values()).sort((a, b) =>
       b.pendingCount - a.pendingCount || b.totalOffers - a.totalOffers
     );
   }
@@ -955,7 +978,7 @@ export class AdminService {
     // Get unique suppliers count
     const uniqueSupplierIds = new Set<string>();
     let totalOffers = 0;
-    
+
     for (const trim of vehicleModel.trims) {
       for (const offer of (trim.supplierOffers ?? [])) {
         uniqueSupplierIds.add(offer.supplierId);

@@ -7,6 +7,7 @@ import { SupplierModule } from './supplier/supplier.module';
 import { VehiclesModule } from './vehicles/vehicles.module';
 import { BuyerModule } from './buyer/buyer.module';
 import { WebsocketModule } from './websocket/websocket.module';
+import { RentalsModule } from './rentals/rentals.module';
 
 @Module({
   imports: [
@@ -20,6 +21,7 @@ import { WebsocketModule } from './websocket/websocket.module';
     VehiclesModule,
     BuyerModule,
     WebsocketModule,
+    RentalsModule,
   ],
 })
 export class AppModule {}

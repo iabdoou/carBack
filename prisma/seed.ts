@@ -1,4 +1,4 @@
-import { PrismaClient, Role, ListingMode, ListingStatus, OfferStatus, OrderStatus, MovementType } from '@prisma/client';
+import { PrismaClient, Role, ListingMode, ListingStatus, OfferStatus, OrderStatus, MovementType, FuelType, Transmission, CarStatus, RentalStatus } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 
 const prisma = new PrismaClient();
@@ -14,6 +14,8 @@ async function main() {
   await prisma.supplierOffer.deleteMany();
   await prisma.trim.deleteMany();
   await prisma.vehicleModel.deleteMany();
+  await prisma.rental.deleteMany();
+  await prisma.rentalCar.deleteMany();
   await prisma.refreshToken.deleteMany();
   await prisma.user.deleteMany();
 
@@ -330,6 +332,62 @@ async function main() {
   });
 
   console.log('✅ Orders and tracking events created');
+  
+  // ============ RENTAL CARS ============
+  const tucson = await prisma.rentalCar.create({
+    data: {
+      brand: 'Hyundai',
+      model: 'Tucson',
+      year: 2024,
+      pricePerDay: 7000,
+      fuel: FuelType.DIESEL,
+      transmission: Transmission.AUTOMATIQUE,
+      imageUrl: 'https://images.unsplash.com/photo-1620608552309-858850604c55?w=400',
+      status: CarStatus.AVAILABLE,
+    },
+  });
+
+  const clio = await prisma.rentalCar.create({
+    data: {
+      brand: 'Renault',
+      model: 'Clio 5',
+      year: 2023,
+      pricePerDay: 5000,
+      fuel: FuelType.ESSENCE,
+      transmission: Transmission.MANUELLE,
+      imageUrl: 'https://images.unsplash.com/photo-1541899481282-d53bffe3c35d?w=400',
+      status: CarStatus.RENTED,
+    },
+  });
+
+  const mercedesC = await prisma.rentalCar.create({
+    data: {
+      brand: 'Mercedes',
+      model: 'Classe C',
+      year: 2025,
+      pricePerDay: 15000,
+      fuel: FuelType.HYBRIDE,
+      transmission: Transmission.AUTOMATIQUE,
+      imageUrl: 'https://images.unsplash.com/photo-1618843479313-40f8afb4b4d8?w=400',
+      status: CarStatus.AVAILABLE,
+    },
+  });
+  console.log('✅ Rental cars created');
+
+  // ============ RENTALS (BOOKINGS) ============
+  await prisma.rental.create({
+    data: {
+      carId: clio.id,
+      clientName: 'Karim Mansouri',
+      clientPhone: '+213 666 78 90 12',
+      startDate: new Date('2025-01-10'),
+      endDate: new Date('2025-01-15'),
+      totalPrice: 25000,
+      status: RentalStatus.ACTIVE,
+      notes: 'Client habituel, fidèle.',
+    },
+  });
+  console.log('✅ Rental bookings created');
 
   console.log('\n🎉 Database seeded successfully!');
   console.log('\n📋 Test Credentials:');

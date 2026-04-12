@@ -67,6 +67,7 @@ model User {
   orders         Order[]
   supplierOffers SupplierOffer[]
   refreshTokens  RefreshToken[]
+  rentalCars     RentalCar[]
 
   @@index([role])
 }
@@ -175,4 +176,78 @@ model TrackingEvent {
   step      Int
   containerTrackingCode String? @default("EGSU6241911")
   eventDate DateTime @default(now())
+}
+
+
+model RentalCar {
+  id           String       @id @default(cuid())
+  brand        String
+  model        String
+  year         Int
+  pricePerDay  Int
+  fuel         FuelType     @default(ESSENCE)
+  transmission Transmission @default(MANUELLE)
+  imageUrl     String?
+  status       CarStatus    @default(AVAILABLE)
+  supplier     User?        @relation(fields: [supplierId], references: [id])
+  supplierId   String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  rentals      Rental[]
+
+  @@map("cars")
+}
+
+// ─── LOCATION ─────────────────────────────────────────────
+model Rental {
+  id         String       @id @default(cuid())
+  car        RentalCar          @relation(fields: [carId], references: [id], onDelete: Cascade)
+  carId      String
+  clientName String
+  clientPhone String
+  startDate  DateTime
+  endDate    DateTime
+  status     RentalStatus @default(ACTIVE)
+  totalPrice Int
+  notes      String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("rentals")
+}
+
+// ─── ENUMS ────────────────────────────────────────────────
+enum CarStatus {
+  AVAILABLE
+  RENTED
+  MAINTENANCE
+
+  @@map("car_status")
+}
+
+enum RentalStatus {
+  ACTIVE
+  COMPLETED
+  CANCELLED
+
+  @@map("rental_status")
+}
+
+enum FuelType {
+  ESSENCE
+  DIESEL
+  HYBRIDE
+  ELECTRIQUE
+
+  @@map("fuel_type")
+}
+
+enum Transmission {
+  MANUELLE
+  AUTOMATIQUE
+
+  @@map("transmission")
 }

@@ -342,7 +342,7 @@ async function main() {
       pricePerDay: 7000,
       fuel: FuelType.DIESEL,
       transmission: Transmission.AUTOMATIQUE,
-      imageUrl: 'https://images.unsplash.com/photo-1620608552309-858850604c55?w=400',
+      imageUrl: 'https://images.unsplash.com/photo-1575090536203-2a6193126514?q=80&w=871&auto=format&fit=crop&ixlib=rb-4.1.0&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D',
       status: CarStatus.AVAILABLE,
     },
   });

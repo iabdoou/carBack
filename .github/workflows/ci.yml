@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build-and-smoke:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: ci
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: car
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U ci" --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgresql://ci:ci@localhost:5432/car
+      DIRECT_URL: postgresql://ci:ci@localhost:5432/car
+      JWT_SECRET: ci-only-secret-that-is-long-enough-for-validation-0123456789
+      CORS_ORIGIN: http://localhost:3000
+      SEED_PASSWORD: ci-seed-password
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run build
+      # Migrations must apply cleanly from an empty database
+      - run: npx prisma migrate deploy
+      - run: npx prisma migrate diff --from-url "$DATABASE_URL" --to-schema-datamodel prisma/schema.prisma --exit-code
+      - run: npm run seed
+      - name: Smoke test (production mode)
+        run: |
+          NODE_ENV=production COOKIE_SECURE=false PORT=8001 node dist/main.js &
+          for i in $(seq 1 30); do curl -sf localhost:8001/api/v1/health && break; sleep 1; done
+          node tests/smoke.mjs http://localhost:8001

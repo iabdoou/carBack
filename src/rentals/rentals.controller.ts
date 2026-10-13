@@ -7,8 +7,11 @@ import {
   Body,
   Param,
   UseGuards,
+  HttpCode,
+  HttpStatus,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiResponse } from '@nestjs/swagger';
+import { Throttle } from '@nestjs/throttler';
 import { RentalsService } from './rentals.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
@@ -79,6 +82,7 @@ export class RentalsController {
   }
 
   @Get('cars/:id/booked-ranges')
+  @Throttle({ default: { ttl: 60_000, limit: 30 } })
   @ApiOperation({ summary: 'Get booked date ranges for a specific car' })
   @ApiResponse({ status: 200, description: 'List of booked intervals' })
   async getBookedRanges(@Param('id') id: string) {
@@ -86,6 +90,8 @@ export class RentalsController {
   }
 
   @Post('check-availability')
+  @HttpCode(HttpStatus.OK)
+  @Throttle({ default: { ttl: 60_000, limit: 20 } })
   @ApiOperation({ summary: 'Check if a car is available for a specific date range' })
   @ApiResponse({ status: 200, description: 'Availability status' })
   async checkAvailability(@Body() dto: CheckAvailabilityDto) {

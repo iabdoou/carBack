@@ -1,10 +1,28 @@
-import { Injectable, UnauthorizedException, ConflictException, BadRequestException } from '@nestjs/common';
+import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import * as bcrypt from 'bcrypt';
+import { createHash, randomBytes } from 'crypto';
+import { CookieOptions } from 'express';
 import { PrismaService } from '../prisma/prisma.service';
 import { LoginDto } from './dto/auth.dto';
-import { v4 as uuidv4 } from 'uuid';
+
+export const REFRESH_COOKIE = 'refreshToken';
+export const REFRESH_COOKIE_PATH = '/api/v1/auth';
+
+// Compared against when the email is unknown so both paths cost one bcrypt check.
+const DUMMY_HASH = bcrypt.hashSync('timing-equalizer', 10);
+
+/** Parses "15m", "7d", "12h", "30s" or a number of seconds into milliseconds. */
+export function durationToMs(value: string | undefined, fallbackMs: number): number {
+  if (!value) return fallbackMs;
+  const match = /^(\d+)\s*([smhd]?)$/.exec(value.trim());
+  if (!match) return fallbackMs;
+  const unit = { '': 1000, s: 1000, m: 60_000, h: 3_600_000, d: 86_400_000 }[match[2]];
+  return Number(match[1]) * unit;
+}
+
+const hashToken = (token: string) => createHash('sha256').update(token).digest('hex');
 
 @Injectable()
 export class AuthService {
@@ -14,25 +32,43 @@ export class AuthService {
     private configService: ConfigService,
   ) {}
 
+  get refreshTtlMs() {
+    return durationToMs(this.configService.get('JWT_REFRESH_EXPIRATION'), 7 * 86_400_000);
+  }
+
+  refreshCookieOptions(): CookieOptions {
+    const sameSite = (this.configService.get<string>('COOKIE_SAMESITE') || 'lax') as 'lax' | 'strict' | 'none';
+    const secureSetting = this.configService.get<string>('COOKIE_SECURE');
+    const secure = secureSetting
+      ? secureSetting === 'true'
+      : this.configService.get('NODE_ENV') === 'production';
+    return {
+      httpOnly: true,
+      // Browsers reject SameSite=None cookies that are not Secure.
+      secure: sameSite === 'none' ? true : secure,
+      sameSite,
+      maxAge: this.refreshTtlMs,
+      path: REFRESH_COOKIE_PATH,
+    };
+  }
+
   async login(dto: LoginDto) {
-    const user = await this.prisma.user.findUnique({
-      where: { email: dto.email },
+    const user = await this.prisma.user.findFirst({
+      where: { email: { equals: dto.email.trim(), mode: 'insensitive' } },
     });
 
-    if (!user) {
+    const isPasswordValid = await bcrypt.compare(dto.password, user?.passwordHash ?? DUMMY_HASH);
+    if (!user || !isPasswordValid) {
       throw new UnauthorizedException('Invalid credentials');
     }
 
-    const isPasswordValid = await bcrypt.compare(dto.password, user.passwordHash);
+    // Opportunistic cleanup of this user's expired sessions
+    await this.prisma.refreshToken.deleteMany({
+      where: { userId: user.id, expiresAt: { lt: new Date() } },
+    });
 
-    if (!isPasswordValid) {
-      throw new UnauthorizedException('Invalid credentials');
-    }
-
-    const tokens = await this.generateTokens(user.id, user.email, user.role);
-
-    // Store refresh token
-    await this.storeRefreshToken(user.id, tokens.refreshToken);
+    const accessToken = this.signAccessToken(user.id, user.email, user.role);
+    const refreshToken = await this.issueRefreshToken(user.id);
 
     return {
       user: {
@@ -41,8 +77,8 @@ export class AuthService {
         email: user.email,
         role: user.role,
       },
-      accessToken: tokens.accessToken,
-      refreshToken: tokens.refreshToken,
+      accessToken,
+      refreshToken,
     };
   }
 
@@ -51,9 +87,8 @@ export class AuthService {
       throw new UnauthorizedException('Refresh token required');
     }
 
-    // Find the refresh token in DB
     const storedToken = await this.prisma.refreshToken.findUnique({
-      where: { token: refreshToken },
+      where: { token: hashToken(refreshToken) },
       include: { user: true },
     });
 
@@ -61,34 +96,34 @@ export class AuthService {
       throw new UnauthorizedException('Invalid or expired refresh token');
     }
 
-    // Delete old token (rotation)
-    await this.prisma.refreshToken.delete({
+    // Rotation: the token is single-use. deleteMany makes concurrent reuse fail.
+    const { count } = await this.prisma.refreshToken.deleteMany({
       where: { id: storedToken.id },
     });
+    if (count === 0) {
+      throw new UnauthorizedException('Invalid or expired refresh token');
+    }
 
-    // Generate new tokens
-    const tokens = await this.generateTokens(
-      storedToken.user.id,
-      storedToken.user.email,
-      storedToken.user.role,
-    );
-
-    // Store new refresh token
-    await this.storeRefreshToken(storedToken.user.id, tokens.refreshToken);
-
+    const { user } = storedToken;
     return {
-      accessToken: tokens.accessToken,
-      refreshToken: tokens.refreshToken,
+      user: { id: user.id, name: user.name, email: user.email, role: user.role },
+      accessToken: this.signAccessToken(user.id, user.email, user.role),
+      refreshToken: await this.issueRefreshToken(user.id),
     };
   }
 
   async logout(refreshToken: string) {
     if (refreshToken) {
       await this.prisma.refreshToken.deleteMany({
-        where: { token: refreshToken },
+        where: { token: hashToken(refreshToken) },
       });
     }
     return { message: 'Logged out successfully' };
+  }
+
+  /** Ends every session of a user, e.g. after a password change. */
+  async revokeAllSessions(userId: string) {
+    await this.prisma.refreshToken.deleteMany({ where: { userId } });
   }
 
   async getMe(userId: string) {
@@ -110,29 +145,25 @@ export class AuthService {
     return user;
   }
 
-  private async generateTokens(userId: string, email: string, role: string) {
-    const payload = { sub: userId, email, role };
-
-    const accessToken = this.jwtService.sign(payload, {
-      secret: this.configService.get('JWT_SECRET'),
-      expiresIn: this.configService.get('JWT_EXPIRATION') || '15m',
-    });
-
-    const refreshToken = uuidv4();
-
-    return { accessToken, refreshToken };
+  private signAccessToken(userId: string, email: string, role: string) {
+    return this.jwtService.sign(
+      { sub: userId, email, role },
+      {
+        secret: this.configService.get('JWT_SECRET'),
+        expiresIn: this.configService.get('JWT_EXPIRATION') || '15m',
+      },
+    );
   }
 
-  private async storeRefreshToken(userId: string, token: string) {
-    const expiresAt = new Date();
-    expiresAt.setDate(expiresAt.getDate() + 7); // 7 days
-
+  private async issueRefreshToken(userId: string) {
+    const token = randomBytes(48).toString('base64url');
     await this.prisma.refreshToken.create({
       data: {
-        token,
+        token: hashToken(token),
         userId,
-        expiresAt,
+        expiresAt: new Date(Date.now() + this.refreshTtlMs),
       },
     });
+    return token;
   }
 }

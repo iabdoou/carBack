@@ -7,13 +7,20 @@ import {
   ConnectedSocket,
   MessageBody,
 } from '@nestjs/websockets';
+import { Logger } from '@nestjs/common';
 import { Server, Socket } from 'socket.io';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
+import { PrismaService } from '../prisma/prisma.service';
+import { corsOrigins } from '../config/env.validation';
+
+type ClientInfo = { userId: string; role: string };
 
 @WebSocketGateway({
   cors: {
-    origin: ['http://localhost:3000', 'https://vehicle-import-mgmt.preview.emergentagent.com'],
+    // Resolved per request: decorators run before ConfigModule loads .env
+    origin: (origin: string | undefined, cb: (err: Error | null, allow?: boolean) => void) =>
+      cb(null, !origin || corsOrigins().includes(origin)),
     credentials: true,
   },
   namespace: '/',
@@ -22,87 +29,61 @@ export class WebsocketGateway implements OnGatewayConnection, OnGatewayDisconnec
   @WebSocketServer()
   server: Server;
 
-  private connectedClients: Map<string, { userId: string; role: string; socket: Socket }> = new Map();
+  private readonly logger = new Logger(WebsocketGateway.name);
+  private connectedClients = new Map<string, ClientInfo>();
 
   constructor(
     private jwtService: JwtService,
     private configService: ConfigService,
+    private prisma: PrismaService,
   ) {}
 
   async handleConnection(client: Socket) {
     try {
-      // Get token from handshake
       const token = client.handshake.auth?.token || client.handshake.headers?.authorization?.replace('Bearer ', '');
-
       if (!token) {
-        console.log('WS: No token provided, disconnecting');
         client.disconnect();
         return;
       }
 
-      // Verify token
       const payload = this.jwtService.verify(token, {
         secret: this.configService.get('JWT_SECRET'),
       });
 
-      // Store client info
-      this.connectedClients.set(client.id, {
-        userId: payload.sub,
-        role: payload.role,
-        socket: client,
-      });
+      this.connectedClients.set(client.id, { userId: payload.sub, role: payload.role });
 
-      console.log(`WS: Client connected - User: ${payload.sub}, Role: ${payload.role}`);
-
-      // Auto-join rooms based on role
+      // Auto-join the rooms the services emit to
       if (payload.role === 'ADMIN') {
         client.join('admin');
       } else if (payload.role === 'SUPPLIER') {
         client.join(`supplier:${payload.sub}`);
+      } else if (payload.role === 'BUYER') {
+        client.join(`buyer:${payload.sub}`);
       }
 
       client.emit('connected', { userId: payload.sub, role: payload.role });
-    } catch (error) {
-      console.log('WS: Invalid token, disconnecting');
+    } catch {
       client.disconnect();
     }
   }
 
   handleDisconnect(client: Socket) {
-    const clientInfo = this.connectedClients.get(client.id);
-    if (clientInfo) {
-      console.log(`WS: Client disconnected - User: ${clientInfo.userId}`);
-      this.connectedClients.delete(client.id);
-    }
+    this.connectedClients.delete(client.id);
   }
 
   @SubscribeMessage('subscribe')
-  handleSubscribe(
+  async handleSubscribe(
     @ConnectedSocket() client: Socket,
     @MessageBody() data: { room: string },
   ) {
     const clientInfo = this.connectedClients.get(client.id);
-    if (!clientInfo) return;
-
-    // Validate room subscription
-    const roomParts = data.room.split(':');
-    const roomType = roomParts[0];
-
-    // Check permissions
-    if (roomType === 'order') {
-      // Buyers can only subscribe to their own orders
-      // Admins can subscribe to any order
-      // For simplicity, we allow the subscription and validate in the service
-      client.join(data.room);
-      console.log(`WS: User ${clientInfo.userId} subscribed to ${data.room}`);
-      client.emit('subscribed', { room: data.room });
-    } else if (roomType === 'supplier' && clientInfo.role === 'SUPPLIER') {
-      client.join(data.room);
-      client.emit('subscribed', { room: data.room });
-    } else if (roomType === 'admin' && clientInfo.role === 'ADMIN') {
-      client.join(data.room);
-      client.emit('subscribed', { room: data.room });
+    const room = typeof data?.room === 'string' ? data.room : '';
+    if (!clientInfo || !(await this.canJoin(clientInfo, room))) {
+      client.emit('subscribe_error', { room });
+      return;
     }
+    client.join(room);
+    client.emit('subscribed', { room });
   }
 
   @SubscribeMessage('unsubscribe')
@@ -110,6 +91,7 @@ export class WebsocketGateway implements OnGatewayConnection, OnGatewayDisconnec
     @ConnectedSocket() client: Socket,
     @MessageBody() data: { room: string },
   ) {
+    if (typeof data?.room !== 'string') return;
     client.leave(data.room);
     client.emit('unsubscribed', { room: data.room });
   }
@@ -122,5 +104,22 @@ export class WebsocketGateway implements OnGatewayConnection, OnGatewayDisconnec
   // Helper method to emit to all connected clients
   emitToAll(event: string, data: any) {
     this.server.emit(event, data);
+  }
+
+  private async canJoin({ userId, role }: ClientInfo, room: string) {
+    const [type, id] = room.split(':');
+    if (role === 'ADMIN') return true;
+    if (type === 'supplier') return role === 'SUPPLIER' && id === userId;
+    if (type === 'buyer') return role === 'BUYER' && id === userId;
+    if (type === 'order' && role === 'BUYER' && id) {
+      try {
+        const order = await this.prisma.order.findUnique({ where: { id }, select: { buyerId: true } });
+        return order?.buyerId === userId;
+      } catch (error) {
+        this.logger.warn(`Order room check failed: ${error instanceof Error ? error.message : error}`);
+        return false;
+      }
+    }
+    return false;
   }
 }

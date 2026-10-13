@@ -3,7 +3,16 @@ import * as bcrypt from 'bcrypt';
 
 const prisma = new PrismaClient();
 
+// DEMO DATA ONLY: this script deletes every row in the database first.
 async function main() {
+  if (process.env.NODE_ENV === 'production' && process.env.SEED_ALLOW_RESET !== 'true') {
+    throw new Error('Refusing to wipe and seed a production database. Set SEED_ALLOW_RESET=true if you really mean it.');
+  }
+  const seedPassword = process.env.SEED_PASSWORD;
+  if (!seedPassword || seedPassword.length < 8) {
+    throw new Error('Set SEED_PASSWORD (min 8 characters) to the password the demo accounts should use.');
+  }
+
   console.log('🌱 Seeding database...');
 
   // Clean existing data
@@ -20,7 +29,7 @@ async function main() {
   await prisma.user.deleteMany();
 
   // Hash password
-  const passwordHash = await bcrypt.hash('password123', 10);
+  const passwordHash = await bcrypt.hash(seedPassword, 10);
 
   // ============ USERS ============
   const admin = await prisma.user.create({
@@ -390,11 +399,11 @@ async function main() {
   console.log('✅ Rental bookings created');
 
   console.log('\n🎉 Database seeded successfully!');
-  console.log('\n📋 Test Credentials:');
-  console.log('   Admin:    admin@trustauto.dz / password123');
-  console.log('   Supplier: supplier@trustauto.dz / password123');
-  console.log('   Buyer 1:  ahmed@client.dz / password123');
-  console.log('   Buyer 2:  karim@client.dz / password123');
+  console.log('\n📋 Demo accounts (password = SEED_PASSWORD):');
+  console.log('   Admin:    admin@trustauto.dz');
+  console.log('   Supplier: supplier@trustauto.dz');
+  console.log('   Buyer 1:  ahmed@client.dz');
+  console.log('   Buyer 2:  karim@client.dz');
 }
 
 main()

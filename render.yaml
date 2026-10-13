@@ -1,0 +1,33 @@
+# Render Blueprint for the API. Secrets marked sync:false are entered in the dashboard.
+services:
+  - type: web
+    name: carback
+    runtime: node
+    # starter avoids the free plan's spin-down (~50s cold start on the first request)
+    plan: starter
+    # --include=dev: TypeScript and the Prisma CLI are needed to build and migrate
+    buildCommand: npm ci --include=dev && npm run build
+    # Applies pending migrations, then starts the server
+    startCommand: npm run start:prod
+    healthCheckPath: /api/v1/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NODE_VERSION
+        value: "22"
+      - key: DATABASE_URL
+        sync: false
+      - key: DIRECT_URL
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true
+      - key: JWT_EXPIRATION
+        value: 15m
+      - key: JWT_REFRESH_EXPIRATION
+        value: 7d
+      - key: CORS_ORIGIN
+        sync: false
+      - key: COOKIE_SAMESITE
+        value: lax
+      - key: TRUST_PROXY
+        value: "2"

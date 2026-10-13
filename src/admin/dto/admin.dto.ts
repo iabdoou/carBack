@@ -1,4 +1,4 @@
-import { IsString, IsNumber, IsOptional, IsEnum, IsEmail, Min, IsDateString, IsUUID } from 'class-validator';
+import { IsString, IsNumber, IsInt, IsOptional, IsEnum, IsEmail, Min, Max, MinLength, MaxLength, IsDateString, IsUUID, NotEquals } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 
@@ -55,8 +55,10 @@ export class CreateBuyerDto {
   @IsString()
   containerTrackingCode?: string;
 
-  @ApiProperty({ example: 'password123' })
+  @ApiProperty({ example: 'a-strong-password' })
   @IsString()
+  @MinLength(8)
+  @MaxLength(128)
   password: string;
 }
 
@@ -81,9 +83,11 @@ export class UpdateBuyerDto {
   @IsString()
   containerTrackingCode?: string;
 
-  @ApiPropertyOptional({ example: 'newpassword123' })
+  @ApiPropertyOptional({ example: 'a-new-strong-password' })
   @IsOptional()
   @IsString()
+  @MinLength(8)
+  @MaxLength(128)
   password?: string;
 }
 
@@ -99,7 +103,9 @@ export class CreateVehicleModelDto {
   model: string;
 
   @ApiProperty({ example: 2024 })
-  @IsNumber()
+  @IsInt()
+  @Min(1950)
+  @Max(2100)
   @Type(() => Number)
   year: number;
 }
@@ -117,7 +123,9 @@ export class UpdateVehicleModelDto {
 
   @ApiPropertyOptional({ example: 2024 })
   @IsOptional()
-  @IsNumber()
+  @IsInt()
+  @Min(1950)
+  @Max(2100)
   @Type(() => Number)
   year?: number;
 }
@@ -172,12 +180,14 @@ export class CreateListingDto {
 
   @ApiProperty({ example: 4500000 })
   @IsNumber()
+  @Min(0)
   @Type(() => Number)
   publicPrice: number;
 
   @ApiProperty({ example: 5 })
-  @IsNumber()
+  @IsInt()
   @Min(1)
+  @Max(10000)
   @Type(() => Number)
   totalQuantity: number;
 }
@@ -191,6 +201,7 @@ export class UpdateListingDto {
   @ApiPropertyOptional({ example: 4500000 })
   @IsOptional()
   @IsNumber()
+  @Min(0)
   @Type(() => Number)
   publicPrice?: number;
 
@@ -212,13 +223,15 @@ export class CreateOrderDto {
   listingId: string;
 
   @ApiProperty({ example: 1 })
-  @IsNumber()
+  @IsInt()
   @Min(1)
+  @Max(10000)
   @Type(() => Number)
   quantity: number;
 
   @ApiProperty({ example: 4400000 })
   @IsNumber()
+  @Min(0)
   @Type(() => Number)
   finalPrice: number;
 
@@ -239,7 +252,9 @@ export class UpdateOrderStatusDto {
 
 export class AddTrackingEventDto {
   @ApiProperty({ example: 1 })
-  @IsNumber()
+  @IsInt()
+  @Min(1)
+  @Max(50)
   @Type(() => Number)
   step: number;
 
@@ -256,8 +271,11 @@ export class AddTrackingEventDto {
 // ============ INVENTORY ============
 
 export class AdjustStockDto {
-  @ApiProperty({ example: 5 })
-  @IsNumber()
+  @ApiProperty({ example: 5, description: 'Positive to add stock, negative to remove' })
+  @IsInt()
+  @NotEquals(0)
+  @Min(-10000)
+  @Max(10000)
   @Type(() => Number)
   quantity: number;
 
@@ -271,13 +289,16 @@ export class AdjustStockDto {
 export class ApproveOfferDto {
   @ApiProperty({ example: 5000000 })
   @IsNumber()
+  @Min(0)
   @Type(() => Number)
   publicPrice: number;
 
-  @ApiProperty({ example: 5 })
-  @IsNumber()
+  @ApiPropertyOptional({ example: 5, description: 'Quantity to approve; defaults to the full offer quantity' })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
   @Type(() => Number)
-  quantity: number;
+  quantity?: number;
 
   @ApiPropertyOptional({ example: 'Approved with modifications' })
   @IsOptional()

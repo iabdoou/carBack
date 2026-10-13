@@ -3,8 +3,10 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  // Migrations need a direct (session) connection, not the transaction pooler
+  directUrl = env("DIRECT_URL")
 }
 
 // ============ ENUMS ============
@@ -79,6 +81,8 @@ model RefreshToken {
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   expiresAt DateTime
   createdAt DateTime @default(now())
+
+  @@index([userId])
 }
 
 model VehicleModel {
@@ -119,6 +123,8 @@ model SupplierOffer {
   createdAt     DateTime    @default(now())
 
   @@index([status])
+  @@index([supplierId])
+  @@index([trimId])
 }
 
 model Listing {
@@ -136,6 +142,7 @@ model Listing {
   movements InventoryMovement[]
 
   @@index([status])
+  @@index([trimId, mode])
 }
 
 model InventoryMovement {
@@ -146,38 +153,43 @@ model InventoryMovement {
   quantity  Int
   reason    String?
   createdAt DateTime     @default(now())
+
+  @@index([listingId, createdAt])
+  @@index([createdAt])
 }
 
 model Order {
-  id         String      @id @default(uuid())
-  buyerId    String
-  buyer      User        @relation(fields: [buyerId], references: [id])
-  listingId  String
-  listing    Listing     @relation(fields: [listingId], references: [id])
-  quantity   Int
-  status     OrderStatus @default(CREATED)
-  finalPrice Float
-  createdAt  DateTime    @default(now())
-  containerTrackingCode String? @default("EGSU6241911")
-  lastTrackedTime DateTime?
-  trackedData Json?
-  
+  id                    String      @id @default(uuid())
+  buyerId               String
+  buyer                 User        @relation(fields: [buyerId], references: [id])
+  listingId             String
+  listing               Listing     @relation(fields: [listingId], references: [id])
+  quantity              Int
+  status                OrderStatus @default(CREATED)
+  finalPrice            Float
+  createdAt             DateTime    @default(now())
+  containerTrackingCode String?
+  lastTrackedTime       DateTime?
+  trackedData           Json?
 
   tracking TrackingEvent[]
 
   @@index([status])
+  @@index([buyerId])
+  @@index([listingId])
 }
 
 model TrackingEvent {
-  id        String   @id @default(uuid())
-  orderId   String
-  order     Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  title     String
-  step      Int
-  containerTrackingCode String? @default("EGSU6241911")
-  eventDate DateTime @default(now())
-}
+  id                    String   @id @default(uuid())
+  orderId               String
+  order                 Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  title                 String
+  step                  Int
+  containerTrackingCode String?
+  eventDate             DateTime @default(now())
 
+  @@index([orderId])
+}
 
 model RentalCar {
   id           String       @id @default(cuid())
@@ -195,27 +207,28 @@ model RentalCar {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  rentals      Rental[]
+  rentals Rental[]
 
   @@map("cars")
 }
 
 // ─── LOCATION ─────────────────────────────────────────────
 model Rental {
-  id         String       @id @default(cuid())
-  car        RentalCar          @relation(fields: [carId], references: [id], onDelete: Cascade)
-  carId      String
-  clientName String
+  id          String       @id @default(cuid())
+  car         RentalCar    @relation(fields: [carId], references: [id], onDelete: Cascade)
+  carId       String
+  clientName  String
   clientPhone String
-  startDate  DateTime
-  endDate    DateTime
-  status     RentalStatus @default(ACTIVE)
-  totalPrice Int
-  notes      String?
+  startDate   DateTime
+  endDate     DateTime
+  status      RentalStatus @default(ACTIVE)
+  totalPrice  Int
+  notes       String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  @@index([carId, startDate, endDate])
   @@map("rentals")
 }
 

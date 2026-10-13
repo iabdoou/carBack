@@ -1,9 +1,16 @@
-import { Injectable, NotFoundException, ForbiddenException } from '@nestjs/common';
+import { Injectable, NotFoundException, ForbiddenException, BadGatewayException, Logger } from '@nestjs/common';
+import { OrderStatus, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
-import { Agent } from "undici";
+import { parseOptionalEnum } from '../common/parse-enum';
+
+const TRACKING_URL = process.env.TRACKING_API_URL || 'https://tracking.timetocargo.com/webapi/track';
+const TRACKING_TIMEOUT_MS = 15_000;
+const TRACKING_CACHE_MS = 24 * 60 * 60 * 1000;
 
 @Injectable()
 export class BuyerService {
+  private readonly logger = new Logger(BuyerService.name);
+
   constructor(private prisma: PrismaService) {}
 
   async getProfile(buyerId: string) {
@@ -26,96 +33,87 @@ export class BuyerService {
     return buyer;
   }
 
-  async getTracking(orderId: string) {
+  async getTracking(buyerId: string, orderId: string) {
     const order = await this.prisma.order.findUnique({
       where: { id: orderId },
       select: {
         id: true,
+        buyerId: true,
         containerTrackingCode: true,
         lastTrackedTime: true,
         trackedData: true,
       },
     });
 
-
     if (!order) {
       throw new NotFoundException('Order not found');
     }
 
-    if(!order.containerTrackingCode) {
+    // Security: buyer can only see tracking of their own orders
+    if (order.buyerId !== buyerId) {
+      throw new ForbiddenException('Access denied');
+    }
+
+    if (!order.containerTrackingCode) {
       throw new NotFoundException('Tracking code not available for this order');
     }
 
-    if(order.lastTrackedTime && new Date().getTime() - new Date(order.lastTrackedTime).getTime() < 24 * 60 * 60 * 1000) {
-      // If last tracked time is within 24 hours, return cached data
-      return {
-        trackedData: order.trackedData,
-      };
+    // Cached data is fresh for 24h
+    if (order.lastTrackedTime && Date.now() - order.lastTrackedTime.getTime() < TRACKING_CACHE_MS) {
+      return { trackedData: order.trackedData };
     }
 
-    const agent = new Agent({
-  connect: {
-    timeout: 30000, // 30s connection timeout
-  },
-});
-
-    let data;
-
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 60000); // 60s request timeout
-
-  try {
-    const res = await fetch("https://tracking.timetocargo.com/webapi/track", {
-      method: "POST",
-      dispatcher: agent,
-      signal: controller.signal,
-      headers: {
-        accept: "application/json, text/plain, */*",
-        "content-type": "application/json",
-        origin: "https://timetocargo.com",
-        referer: "https://timetocargo.com/",
-        "cache-control": "no-cache",
-        pragma: "no-cache",
-        "user-agent":
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-      },
-      body: JSON.stringify({
-        track_number: {
-          value: order.containerTrackingCode,
-          type: "container",
+    try {
+      const res = await fetch(TRACKING_URL, {
+        method: 'POST',
+        signal: AbortSignal.timeout(TRACKING_TIMEOUT_MS),
+        // NOTE: undocumented endpoint used with browser-like headers; replace with a
+        // contracted tracking API before relying on it commercially.
+        headers: {
+          accept: 'application/json, text/plain, */*',
+          'content-type': 'application/json',
+          origin: 'https://timetocargo.com',
+          referer: 'https://timetocargo.com/',
+          'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
         },
-        company: "AUTO",
-        need_route: true,
-        lang: "en",
-      }),
-    } as any);
+        body: JSON.stringify({
+          track_number: {
+            value: order.containerTrackingCode,
+            type: 'container',
+          },
+          company: 'AUTO',
+          need_route: true,
+          lang: 'en',
+        }),
+      });
 
-    if (!res.ok) {
-      throw new Error(`API request failed with status ${res.status}`);
+      if (!res.ok) {
+        throw new Error(`Tracking provider responded with status ${res.status}`);
+      }
+
+      const result = await res.json();
+      const data = Array.isArray(result?.data) ? result.data[0] : undefined;
+      if (!data) {
+        throw new Error('Tracking provider returned no data');
+      }
+
+      await this.prisma.order.update({
+        where: { id: orderId },
+        data: {
+          lastTrackedTime: new Date(),
+          trackedData: data,
+        },
+      });
+
+      return { trackedData: data };
+    } catch (error) {
+      this.logger.warn(`Container tracking failed for order ${orderId}: ${error instanceof Error ? error.message : error}`);
+      // Serve stale data rather than nothing when the provider is down
+      if (order.trackedData) {
+        return { trackedData: order.trackedData, stale: true };
+      }
+      throw new BadGatewayException('Container tracking is temporarily unavailable');
     }
-
-    const result = await res.json();
-    data = result.data[0];
-
-    // Save to DB
-    await this.prisma.order.update({
-      where: { id: orderId },
-      data: {
-        lastTrackedTime: new Date(),
-        trackedData: data,
-      },
-    });
-
-    clearTimeout(timeout);
-    return {trackedData: data};
-
-  } catch (error) {
-    clearTimeout(timeout);
-    console.error("Error tracking container:", error);
-    throw error;
-  }
-
-    
   }
 
   async getStats(buyerId: string) {
@@ -139,8 +137,10 @@ export class BuyerService {
   }
 
   async getMyOrders(buyerId: string, status?: string) {
-    const where: any = { buyerId };
-    if (status) where.status = status;
+    const where: Prisma.OrderWhereInput = {
+      buyerId,
+      status: parseOptionalEnum(OrderStatus, status, 'status'),
+    };
 
     return this.prisma.order.findMany({
       where,

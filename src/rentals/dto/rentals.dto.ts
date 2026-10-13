@@ -1,4 +1,4 @@
-import { IsString, IsNumber, IsOptional, IsEnum, IsUUID, Min, IsDateString } from 'class-validator';
+import { IsString, IsNumber, IsInt, IsOptional, IsEnum, IsUUID, Min, Max, MaxLength, IsDateString, IsNotEmpty } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 
@@ -36,12 +36,14 @@ export class CreateRentalCarDto {
   model: string;
 
   @ApiProperty({ example: 2023 })
-  @IsNumber()
+  @IsInt()
+  @Min(1950)
+  @Max(2100)
   @Type(() => Number)
   year: number;
 
   @ApiProperty({ example: 5000 })
-  @IsNumber()
+  @IsInt()
   @Min(0)
   @Type(() => Number)
   pricePerDay: number;
@@ -83,13 +85,15 @@ export class UpdateRentalCarDto {
 
   @ApiPropertyOptional({ example: 2023 })
   @IsOptional()
-  @IsNumber()
+  @IsInt()
+  @Min(1950)
+  @Max(2100)
   @Type(() => Number)
   year?: number;
 
   @ApiPropertyOptional({ example: 5000 })
   @IsOptional()
-  @IsNumber()
+  @IsInt()
   @Min(0)
   @Type(() => Number)
   pricePerDay?: number;
@@ -127,10 +131,14 @@ export class CreateRentalDto {
 
   @ApiProperty({ example: 'Mohamed Larbi' })
   @IsString()
+  @IsNotEmpty()
+  @MaxLength(120)
   clientName: string;
 
   @ApiProperty({ example: '0550 12 34 56' })
   @IsString()
+  @IsNotEmpty()
+  @MaxLength(30)
   clientPhone: string;
 
   @ApiProperty({ example: '2024-04-11T12:00:00Z' })
@@ -141,15 +149,17 @@ export class CreateRentalDto {
   @IsDateString()
   endDate: string;
 
-  @ApiProperty({ example: 15000 })
-  @IsNumber()
+  @ApiPropertyOptional({ example: 15000, description: 'Defaults to pricePerDay x number of days' })
+  @IsOptional()
+  @IsInt()
   @Min(0)
   @Type(() => Number)
-  totalPrice: number;
+  totalPrice?: number;
 
   @ApiPropertyOptional({ example: 'Initial deposit paid' })
   @IsOptional()
   @IsString()
+  @MaxLength(1000)
   notes?: string;
 
   @ApiPropertyOptional({ enum: RentalStatus, default: RentalStatus.ACTIVE })

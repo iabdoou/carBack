@@ -6,6 +6,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery, ApiResponse } from '@nestjs/swagger';
+import { Throttle } from '@nestjs/throttler';
 import { BuyerService } from './buyer.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
@@ -67,7 +68,8 @@ export class BuyerController {
   @Get('orders/:id/tracking')
   @ApiOperation({ summary: 'Get tracking of the order' })
   @ApiResponse({ status: 200, description: 'Tracking information' })
-  async getTracking(@Param('id') id: string) {
-    return this.buyerService.getTracking(id);
+  @Throttle({ default: { ttl: 60_000, limit: 20 } })
+  async getTracking(@CurrentUser() user: any, @Param('id') id: string) {
+    return this.buyerService.getTracking(user.sub, id);
   }
 }

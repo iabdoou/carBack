@@ -1,5 +1,7 @@
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { OfferStatus, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { parseOptionalEnum } from '../common/parse-enum';
 import { CreateOfferDto } from './dto/supplier.dto';
 
 @Injectable()
@@ -28,8 +30,10 @@ export class SupplierService {
   }
 
   async getMyOffers(supplierId: string, status?: string) {
-    const where: any = { supplierId };
-    if (status) where.status = status;
+    const where: Prisma.SupplierOfferWhereInput = {
+      supplierId,
+      status: parseOptionalEnum(OfferStatus, status, 'status'),
+    };
 
     return this.prisma.supplierOffer.findMany({
       where,
@@ -44,8 +48,10 @@ export class SupplierService {
 
   // Get offers grouped by vehicle model for this supplier
   async getMyOffersGroupedByVehicle(supplierId: string, status?: string) {
-    const where: any = { supplierId };
-    if (status) where.status = status;
+    const where: Prisma.SupplierOfferWhereInput = {
+      supplierId,
+      status: parseOptionalEnum(OfferStatus, status, 'status'),
+    };
 
     const offers = await this.prisma.supplierOffer.findMany({
       where,
@@ -108,8 +114,10 @@ export class SupplierService {
       throw new NotFoundException('Vehicle model not found');
     }
 
-    const where: any = { supplierId };
-    if (status) where.status = status;
+    const where: Prisma.SupplierOfferWhereInput = {
+      supplierId,
+      status: parseOptionalEnum(OfferStatus, status, 'status'),
+    };
 
     const offers = await this.prisma.supplierOffer.findMany({
       where: {

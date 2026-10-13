@@ -18,7 +18,27 @@ import {
   ApproveOfferDto,
   RejectOfferDto,
 } from './dto/admin.dto';
-import { MovementType, OrderStatus as OrderStatusEnum, ListingStatus } from '@prisma/client';
+import { ListingMode, ListingStatus, OfferStatus, OrderStatus, Prisma } from '@prisma/client';
+import { parseOptionalEnum } from '../common/parse-enum';
+
+// Once an order is delivered or cancelled its stock effect is final.
+const TERMINAL_ORDER_STATUSES: OrderStatus[] = ['DELIVERED', 'CANCELLED'];
+
+/** Status a listing should have after a stock change. A deliberate INACTIVE is kept. */
+function stockStatus(current: ListingStatus, total: number, reserved: number): ListingStatus {
+  if (current === 'INACTIVE') return 'INACTIVE';
+  return total - reserved <= 0 ? 'OUT_OF_STOCK' : 'ACTIVE';
+}
+
+/** Row-locks a listing for the rest of the transaction so stock checks cannot race. */
+async function lockListing(tx: Prisma.TransactionClient, id: string) {
+  await tx.$queryRaw`SELECT id FROM "Listing" WHERE id = ${id} FOR UPDATE`;
+  const listing = await tx.listing.findUnique({ where: { id } });
+  if (!listing) {
+    throw new NotFoundException('Listing not found');
+  }
+  return listing;
+}
 
 @Injectable()
 export class AdminService {
@@ -165,7 +185,7 @@ export class AdminService {
     if (dto.containerTrackingCode !== undefined) updateData.containerTrackingCode = dto.containerTrackingCode;
     if (dto.password) updateData.passwordHash = await bcrypt.hash(dto.password, 10);
 
-    return this.prisma.user.update({
+    const updated = await this.prisma.user.update({
       where: { id },
       data: updateData,
       select: {
@@ -178,6 +198,11 @@ export class AdminService {
         createdAt: true,
       },
     });
+
+    // A password change ends every existing session of that user
+    if (dto.password) await this.prisma.refreshToken.deleteMany({ where: { userId: id } });
+
+    return updated;
   }
 
   async deleteBuyer(id: string) {
@@ -187,6 +212,10 @@ export class AdminService {
 
     if (!buyer) {
       throw new NotFoundException('Buyer not found');
+    }
+
+    if (await this.prisma.order.count({ where: { buyerId: id } })) {
+      throw new ConflictException('This buyer has orders and cannot be deleted');
     }
 
     await this.prisma.user.delete({ where: { id } });
@@ -241,7 +270,7 @@ export class AdminService {
         containerTrackingCode: true,
         createdAt: true,
         _count: {
-          select: { orders: true },
+          select: { supplierOffers: true },
         },
       },
       orderBy: { createdAt: 'desc' },
@@ -258,17 +287,10 @@ export class AdminService {
         phone: true,
         containerTrackingCode: true,
         createdAt: true,
-        orders: {
+        _count: { select: { supplierOffers: true } },
+        supplierOffers: {
           include: {
-            listing: {
-              include: {
-                trim: {
-                  include: {
-                    vehicleModel: true,
-                  },
-                },
-              },
-            },
+            trim: { include: { vehicleModel: true } },
           },
           orderBy: { createdAt: 'desc' },
         },
@@ -298,7 +320,7 @@ export class AdminService {
     if (dto.containerTrackingCode !== undefined) updateData.containerTrackingCode = dto.containerTrackingCode;
     if (dto.password) updateData.passwordHash = await bcrypt.hash(dto.password, 10);
 
-    return this.prisma.user.update({
+    const updated = await this.prisma.user.update({
       where: { id },
       data: updateData,
       select: {
@@ -311,6 +333,11 @@ export class AdminService {
         createdAt: true,
       },
     });
+
+    // A password change ends every existing session of that user
+    if (dto.password) await this.prisma.refreshToken.deleteMany({ where: { userId: id } });
+
+    return updated;
   }
 
   async deleteSupplier(id: string) {
@@ -320,6 +347,10 @@ export class AdminService {
 
     if (!supplier) {
       throw new NotFoundException('Supplier not found');
+    }
+
+    if (await this.prisma.supplierOffer.count({ where: { supplierId: id } })) {
+      throw new ConflictException('This supplier has offers and cannot be deleted');
     }
 
     await this.prisma.user.delete({ where: { id } });
@@ -386,6 +417,13 @@ export class AdminService {
       throw new NotFoundException('Vehicle model not found');
     }
 
+    const inUse = await this.prisma.trim.count({
+      where: { vehicleModelId: id, OR: [{ listings: { some: {} } }, { supplierOffers: { some: {} } }] },
+    });
+    if (inUse) {
+      throw new ConflictException('This model has listings or supplier offers and cannot be deleted');
+    }
+
     await this.prisma.vehicleModel.delete({ where: { id } });
     return { message: 'Vehicle model deleted successfully' };
   }
@@ -444,6 +482,14 @@ export class AdminService {
       throw new NotFoundException('Trim not found');
     }
 
+    const [listings, offers] = await Promise.all([
+      this.prisma.listing.count({ where: { trimId: id } }),
+      this.prisma.supplierOffer.count({ where: { trimId: id } }),
+    ]);
+    if (listings || offers) {
+      throw new ConflictException('This trim has listings or supplier offers and cannot be deleted');
+    }
+
     await this.prisma.trim.delete({ where: { id } });
     return { message: 'Trim deleted successfully' };
   }
@@ -456,30 +502,34 @@ export class AdminService {
       throw new NotFoundException('Trim not found');
     }
 
-    const listing = await this.prisma.listing.create({
-      data: {
-        trimId: dto.trimId,
-        mode: dto.mode,
-        publicPrice: dto.publicPrice,
-        totalQuantity: dto.totalQuantity,
-        reservedQuantity: 0,
-        status: 'ACTIVE',
-      },
-      include: {
-        trim: {
-          include: { vehicleModel: true },
+    const listing = await this.prisma.$transaction(async (tx) => {
+      const created = await tx.listing.create({
+        data: {
+          trimId: dto.trimId,
+          mode: dto.mode,
+          publicPrice: dto.publicPrice,
+          totalQuantity: dto.totalQuantity,
+          reservedQuantity: 0,
+          status: 'ACTIVE',
         },
-      },
-    });
+        include: {
+          trim: {
+            include: { vehicleModel: true },
+          },
+        },
+      });
 
-    // Create initial ADD movement
-    await this.prisma.inventoryMovement.create({
-      data: {
-        listingId: listing.id,
-        type: 'ADD',
-        quantity: dto.totalQuantity,
-        reason: 'Initial stock',
-      },
+      // Create initial ADD movement
+      await tx.inventoryMovement.create({
+        data: {
+          listingId: created.id,
+          type: 'ADD',
+          quantity: dto.totalQuantity,
+          reason: 'Initial stock',
+        },
+      });
+
+      return created;
     });
 
     this.wsGateway.emitToRoom('admin', 'stock_changed', { listingId: listing.id });
@@ -488,9 +538,10 @@ export class AdminService {
   }
 
   async getAllListings(mode?: string, status?: string) {
-    const where: any = {};
-    if (mode) where.mode = mode;
-    if (status) where.status = status;
+    const where: Prisma.ListingWhereInput = {
+      mode: parseOptionalEnum(ListingMode, mode, 'mode'),
+      status: parseOptionalEnum(ListingStatus, status, 'status'),
+    };
 
     return this.prisma.listing.findMany({
       where,
@@ -553,38 +604,44 @@ export class AdminService {
       throw new NotFoundException('Listing not found');
     }
 
-    await this.prisma.listing.delete({ where: { id } });
+    if (await this.prisma.order.count({ where: { listingId: id } })) {
+      throw new ConflictException('This listing has orders; set it INACTIVE instead of deleting it');
+    }
+
+    await this.prisma.$transaction([
+      this.prisma.inventoryMovement.deleteMany({ where: { listingId: id } }),
+      this.prisma.listing.delete({ where: { id } }),
+    ]);
     return { message: 'Listing deleted successfully' };
   }
 
   async adjustStock(id: string, dto: AdjustStockDto) {
-    const listing = await this.prisma.listing.findUnique({ where: { id } });
-    if (!listing) {
-      throw new NotFoundException('Listing not found');
-    }
+    const updatedListing = await this.prisma.$transaction(async (tx) => {
+      const listing = await lockListing(tx, id);
 
-    const newTotal = listing.totalQuantity + dto.quantity;
-    if (newTotal < listing.reservedQuantity) {
-      throw new BadRequestException('Cannot reduce stock below reserved quantity');
-    }
+      const newTotal = listing.totalQuantity + dto.quantity;
+      if (newTotal < listing.reservedQuantity) {
+        throw new BadRequestException('Cannot reduce stock below reserved quantity');
+      }
 
-    // Update listing
-    const updatedListing = await this.prisma.listing.update({
-      where: { id },
-      data: {
-        totalQuantity: newTotal,
-        status: newTotal - listing.reservedQuantity <= 0 ? 'OUT_OF_STOCK' : 'ACTIVE',
-      },
-    });
+      const updated = await tx.listing.update({
+        where: { id },
+        data: {
+          totalQuantity: newTotal,
+          status: stockStatus(listing.status, newTotal, listing.reservedQuantity),
+        },
+      });
 
-    // Create movement
-    await this.prisma.inventoryMovement.create({
-      data: {
-        listingId: id,
-        type: 'ADJUST',
-        quantity: dto.quantity,
-        reason: dto.reason,
-      },
+      await tx.inventoryMovement.create({
+        data: {
+          listingId: id,
+          type: 'ADJUST',
+          quantity: dto.quantity,
+          reason: dto.reason,
+        },
+      });
+
+      return updated;
     });
 
     this.wsGateway.emitToRoom('admin', 'stock_changed', { listingId: id });
@@ -595,8 +652,7 @@ export class AdminService {
   // ============ STOCK LEDGER ============
 
   async getStockLedger(listingId?: string) {
-    const where: any = {};
-    if (listingId) where.listingId = listingId;
+    const where: Prisma.InventoryMovementWhereInput = listingId ? { listingId } : {};
 
     return this.prisma.inventoryMovement.findMany({
       where,
@@ -625,27 +681,24 @@ export class AdminService {
       throw new NotFoundException('Buyer not found');
     }
 
-    // Validate listing and check stock
-    const listing = await this.prisma.listing.findUnique({ where: { id: dto.listingId } });
-    if (!listing) {
-      throw new NotFoundException('Listing not found');
-    }
-
-    const sellable = listing.totalQuantity - listing.reservedQuantity;
-    if (sellable < dto.quantity) {
-      throw new BadRequestException(`Insufficient stock. Available: ${sellable}`);
-    }
-
-    // Create order in transaction
+    // Create order in transaction; the listing row stays locked until commit
     const order = await this.prisma.$transaction(async (tx) => {
-      // Increment reserved quantity
+      const listing = await lockListing(tx, dto.listingId);
+      if (listing.status === 'INACTIVE') {
+        throw new BadRequestException('Listing is inactive');
+      }
+
+      const sellable = listing.totalQuantity - listing.reservedQuantity;
+      if (sellable < dto.quantity) {
+        throw new BadRequestException(`Insufficient stock. Available: ${sellable}`);
+      }
+
+      const newReserved = listing.reservedQuantity + dto.quantity;
       await tx.listing.update({
         where: { id: dto.listingId },
         data: {
-          reservedQuantity: { increment: dto.quantity },
-          status: listing.totalQuantity - listing.reservedQuantity - dto.quantity <= 0
-            ? 'OUT_OF_STOCK'
-            : 'ACTIVE',
+          reservedQuantity: newReserved,
+          status: stockStatus(listing.status, listing.totalQuantity, newReserved),
         },
       });
 
@@ -708,8 +761,9 @@ export class AdminService {
   }
 
   async getAllOrders(status?: string) {
-    const where: any = {};
-    if (status) where.status = status;
+    const where: Prisma.OrderWhereInput = {
+      status: parseOptionalEnum(OrderStatus, status, 'status'),
+    };
 
     return this.prisma.order.findMany({
       where,
@@ -771,81 +825,61 @@ export class AdminService {
   }
 
   async updateOrderStatus(id: string, dto: UpdateOrderStatusDto) {
-    const order = await this.prisma.order.findUnique({
-      where: { id },
-      include: { listing: true },
-    });
-    if (!order) {
-      throw new NotFoundException('Order not found');
-    }
+    const newStatus = dto.status as OrderStatus;
 
-    const newStatus = dto.status;
+    const { order, updatedOrder } = await this.prisma.$transaction(async (tx) => {
+      // Lock the order so two concurrent status changes cannot both apply stock effects
+      await tx.$queryRaw`SELECT id FROM "Order" WHERE id = ${id} FOR UPDATE`;
+      const order = await tx.order.findUnique({ where: { id } });
+      if (!order) {
+        throw new NotFoundException('Order not found');
+      }
+      if (order.status === newStatus) {
+        throw new BadRequestException(`Order is already ${newStatus}`);
+      }
+      if (TERMINAL_ORDER_STATUSES.includes(order.status)) {
+        throw new BadRequestException(`Order is ${order.status} and can no longer change status`);
+      }
 
-    // Handle stock movements based on status change
-    if (newStatus === 'DELIVERED' && order.status !== 'DELIVERED') {
-      // DELIVERED: decrease reserved and total, movement SOLD
-      await this.prisma.$transaction(async (tx) => {
+      if (newStatus === 'DELIVERED' || newStatus === 'CANCELLED') {
+        const listing = await lockListing(tx, order.listingId);
+        const reserved = listing.reservedQuantity - order.quantity;
+        // DELIVERED: the reserved units leave stock. CANCELLED: they go back on sale.
+        const total = newStatus === 'DELIVERED'
+          ? listing.totalQuantity - order.quantity
+          : listing.totalQuantity;
+
         await tx.listing.update({
           where: { id: order.listingId },
           data: {
-            reservedQuantity: { decrement: order.quantity },
-            totalQuantity: { decrement: order.quantity },
+            reservedQuantity: reserved,
+            totalQuantity: total,
+            status: stockStatus(listing.status, total, reserved),
           },
         });
 
         await tx.inventoryMovement.create({
-          data: {
-            listingId: order.listingId,
-            type: 'SOLD',
-            quantity: -order.quantity,
-            reason: `Order ${id} delivered`,
-          },
+          data: newStatus === 'DELIVERED'
+            ? { listingId: order.listingId, type: 'SOLD', quantity: -order.quantity, reason: `Order ${id} delivered` }
+            : { listingId: order.listingId, type: 'RELEASE', quantity: order.quantity, reason: `Order ${id} cancelled` },
         });
+      }
 
-        // Check and update status if out of stock
-        const listing = await tx.listing.findUnique({ where: { id: order.listingId } });
-        if (listing && listing.totalQuantity - listing.reservedQuantity <= 0) {
-          await tx.listing.update({
-            where: { id: order.listingId },
-            data: { status: 'OUT_OF_STOCK' },
-          });
-        }
-      });
-    } else if (newStatus === 'CANCELLED' && order.status !== 'CANCELLED') {
-      // CANCELLED: release reserved, movement RELEASE
-      await this.prisma.$transaction(async (tx) => {
-        await tx.listing.update({
-          where: { id: order.listingId },
-          data: {
-            reservedQuantity: { decrement: order.quantity },
-            status: 'ACTIVE',
+      const updatedOrder = await tx.order.update({
+        where: { id },
+        data: { status: newStatus },
+        include: {
+          buyer: { select: { id: true, name: true, email: true } },
+          listing: {
+            include: {
+              trim: { include: { vehicleModel: true } },
+            },
           },
-        });
-
-        await tx.inventoryMovement.create({
-          data: {
-            listingId: order.listingId,
-            type: 'RELEASE',
-            quantity: order.quantity,
-            reason: `Order ${id} cancelled`,
-          },
-        });
-      });
-    }
-
-    // Update order status
-    const updatedOrder = await this.prisma.order.update({
-      where: { id },
-      data: { status: newStatus },
-      include: {
-        buyer: { select: { id: true, name: true, email: true } },
-        listing: {
-          include: {
-            trim: { include: { vehicleModel: true } },
-          },
+          tracking: { orderBy: { step: 'asc' } },
         },
-        tracking: { orderBy: { step: 'asc' } },
-      },
+      });
+
+      return { order, updatedOrder };
     });
 
     // Emit WebSocket events
@@ -884,8 +918,9 @@ export class AdminService {
   // ============ SUPPLIER OFFERS ============
 
   async getAllOffers(status?: string) {
-    const where: any = {};
-    if (status) where.status = status;
+    const where: Prisma.SupplierOfferWhereInput = {
+      status: parseOptionalEnum(OfferStatus, status, 'status'),
+    };
 
     return this.prisma.supplierOffer.findMany({
       where,
@@ -901,8 +936,9 @@ export class AdminService {
 
   // Get offers grouped by vehicle model
   async getOffersGroupedByVehicle(status?: string) {
-    const where: any = {};
-    if (status) where.status = status;
+    const where: Prisma.SupplierOfferWhereInput = {
+      status: parseOptionalEnum(OfferStatus, status, 'status'),
+    };
 
     // Get all offers with their related data
     const offers = await this.prisma.supplierOffer.findMany({
@@ -960,7 +996,7 @@ export class AdminService {
         trims: {
           include: {
             supplierOffers: {
-              where: status ? { status: status as any } : {},
+              where: { status: parseOptionalEnum(OfferStatus, status, 'status') },
               include: {
                 supplier: { select: { id: true, name: true, email: true } },
               },
@@ -1024,8 +1060,22 @@ export class AdminService {
       throw new BadRequestException('Offer already processed');
     }
 
+    const quantity = dto.quantity ?? offer.quantity;
+    if (quantity > offer.quantity) {
+      throw new BadRequestException(`Cannot approve more than the offered quantity (${offer.quantity})`);
+    }
+
     // Transaction: approve offer, create/update listing
     const result = await this.prisma.$transaction(async (tx) => {
+      // Only a still-pending offer can be approved (guards against double approval)
+      const { count } = await tx.supplierOffer.updateMany({
+        where: { id, status: 'PENDING' },
+        data: { status: 'APPROVED' },
+      });
+      if (count === 0) {
+        throw new BadRequestException('Offer already processed');
+      }
+
       // Check if listing exists for this trim+mode
       let listing = await tx.listing.findFirst({
         where: {
@@ -1035,13 +1085,14 @@ export class AdminService {
       });
 
       if (listing) {
-        // Update existing listing
+        listing = await lockListing(tx, listing.id);
+        const total = listing.totalQuantity + quantity;
         listing = await tx.listing.update({
           where: { id: listing.id },
           data: {
             publicPrice: dto.publicPrice,
-            totalQuantity: { increment: offer.quantity },
-            status: 'ACTIVE',
+            totalQuantity: total,
+            status: stockStatus(listing.status, total, listing.reservedQuantity),
           },
         });
       } else {
@@ -1051,7 +1102,7 @@ export class AdminService {
             trimId: offer.trimId,
             mode: offer.mode,
             publicPrice: dto.publicPrice,
-            totalQuantity: offer.quantity,
+            totalQuantity: quantity,
             reservedQuantity: 0,
             status: 'ACTIVE',
           },
@@ -1063,17 +1114,13 @@ export class AdminService {
         data: {
           listingId: listing.id,
           type: 'ADD',
-          quantity: offer.quantity,
+          quantity,
           reason: `Supplier offer ${id} approved`,
         },
       });
 
-      // Update offer status
-      const approvedOffer = await tx.supplierOffer.update({
+      const approvedOffer = await tx.supplierOffer.findUnique({
         where: { id },
-        data: {
-          status: 'APPROVED',
-        },
         include: {
           supplier: { select: { id: true, name: true, email: true } },
           trim: { include: { vehicleModel: true } },
@@ -1104,11 +1151,16 @@ export class AdminService {
       throw new BadRequestException('Offer already processed');
     }
 
-    const rejectedOffer = await this.prisma.supplierOffer.update({
+    const { count } = await this.prisma.supplierOffer.updateMany({
+      where: { id, status: 'PENDING' },
+      data: { status: 'REJECTED' },
+    });
+    if (count === 0) {
+      throw new BadRequestException('Offer already processed');
+    }
+
+    const rejectedOffer = await this.prisma.supplierOffer.findUnique({
       where: { id },
-      data: {
-        status: 'REJECTED',
-      },
       include: {
         supplier: { select: { id: true, name: true, email: true } },
         trim: { include: { vehicleModel: true } },

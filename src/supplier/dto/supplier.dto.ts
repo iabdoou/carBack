@@ -1,4 +1,4 @@
-import { IsString, IsNumber, IsOptional, IsEnum, IsDateString, IsUUID, Min } from 'class-validator';
+import { IsString, IsNumber, IsInt, IsOptional, IsEnum, IsDateString, IsUUID, Min, Max } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 
@@ -19,12 +19,14 @@ export class CreateOfferDto {
 
   @ApiProperty({ example: 5000000 })
   @IsNumber()
+  @Min(0)
   @Type(() => Number)
   proposedPrice: number;
 
   @ApiProperty({ example: 3 })
-  @IsNumber()
+  @IsInt()
   @Min(1)
+  @Max(10000)
   @Type(() => Number)
   quantity: number;
 

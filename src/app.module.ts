@@ -2,7 +2,7 @@ import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { APP_GUARD } from '@nestjs/core';
 import { ThrottlerModule } from '@nestjs/throttler';
-import { AppThrottlerGuard } from './common/throttler.guard';
+import { AppThrottlerGuard, ipTracker, isLoginRoute } from './common/throttler.guard';
 import { PrismaModule } from './prisma/prisma.module';
 import { AuthModule } from './auth/auth.module';
 import { AdminModule } from './admin/admin.module';
@@ -20,8 +20,14 @@ import { validateEnv } from './config/env.validation';
       isGlobal: true,
       validate: validateEnv,
     }),
-    // Global default: 120 requests / minute / IP. Sensitive routes tighten this.
-    ThrottlerModule.forRoot([{ ttl: 60_000, limit: 120 }]),
+    ThrottlerModule.forRoot([
+      // Global default: 120 requests / minute / IP. Sensitive routes tighten this
+      // (login: 10 attempts / 15 min per IP + email).
+      { name: 'default', ttl: 60_000, limit: 120 },
+      // Login only: 30 attempts / 15 min per IP whatever the email, so one
+      // client cannot spray passwords across many accounts.
+      { name: 'loginIp', ttl: 15 * 60_000, limit: 30, skipIf: (ctx) => !isLoginRoute(ctx), getTracker: ipTracker },
+    ]),
     PrismaModule,
     AuthModule,
     AdminModule,

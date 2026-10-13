@@ -141,11 +141,11 @@ export class CreateRentalDto {
   @MaxLength(30)
   clientPhone: string;
 
-  @ApiProperty({ example: '2024-04-11T12:00:00Z' })
+  @ApiProperty({ example: '2024-04-11', description: 'First rented day (inclusive)' })
   @IsDateString()
   startDate: string;
 
-  @ApiProperty({ example: '2024-04-15T12:00:00Z' })
+  @ApiProperty({ example: '2024-04-15', description: 'Last rented day (inclusive)' })
   @IsDateString()
   endDate: string;
 
@@ -168,16 +168,60 @@ export class CreateRentalDto {
   status?: RentalStatus;
 }
 
+export class UpdateRentalDto {
+  @ApiPropertyOptional({ example: 'Mohamed Larbi' })
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(120)
+  clientName?: string;
+
+  @ApiPropertyOptional({ example: '0550 12 34 56' })
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(30)
+  clientPhone?: string;
+
+  @ApiPropertyOptional({ example: '2024-04-11', description: 'First rented day (inclusive)' })
+  @IsOptional()
+  @IsDateString()
+  startDate?: string;
+
+  @ApiPropertyOptional({ example: '2024-04-15', description: 'Last rented day (inclusive)' })
+  @IsOptional()
+  @IsDateString()
+  endDate?: string;
+
+  @ApiPropertyOptional({ example: 15000, description: 'Recomputed from the dates when they change and this is omitted' })
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Type(() => Number)
+  totalPrice?: number;
+
+  @ApiPropertyOptional({ example: 'Caution rendue' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(1000)
+  notes?: string;
+
+  @ApiPropertyOptional({ enum: RentalStatus, description: 'ACTIVE -> COMPLETED or CANCELLED (both final)' })
+  @IsOptional()
+  @IsEnum(RentalStatus)
+  status?: RentalStatus;
+}
+
 export class CheckAvailabilityDto {
   @ApiProperty({ description: 'ID of the car to check' })
   @IsString()
   carId: string;
 
-  @ApiProperty({ example: '2024-04-11T12:00:00Z' })
+  @ApiProperty({ example: '2024-04-11', description: 'First rented day (inclusive)' })
   @IsDateString()
   startDate: string;
 
-  @ApiProperty({ example: '2024-04-15T12:00:00Z' })
+  @ApiProperty({ example: '2024-04-15', description: 'Last rented day (inclusive)' })
   @IsDateString()
   endDate: string;
 }

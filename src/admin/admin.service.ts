@@ -21,8 +21,27 @@ import {
 import { ListingMode, ListingStatus, OfferStatus, OrderStatus, Prisma } from '@prisma/client';
 import { parseOptionalEnum } from '../common/parse-enum';
 
-// Once an order is delivered or cancelled its stock effect is final.
-const TERMINAL_ORDER_STATUSES: OrderStatus[] = ['DELIVERED', 'CANCELLED'];
+// Orders only move forward; DELIVERED and CANCELLED are final.
+const NEXT_ORDER_STATUSES: Record<OrderStatus, OrderStatus[]> = {
+  CREATED: ['CONFIRMED', 'CANCELLED'],
+  CONFIRMED: ['IN_TRANSIT', 'READY', 'CANCELLED'],
+  IN_TRANSIT: ['ARRIVED', 'CANCELLED'],
+  ARRIVED: ['READY', 'CANCELLED'],
+  READY: ['DELIVERED', 'CANCELLED'],
+  DELIVERED: [],
+  CANCELLED: [],
+};
+
+/**
+ * Statuses an order may move to next. A car already in stock goes straight
+ * from CONFIRMED to READY; a car that has to be shipped goes through
+ * IN_TRANSIT and ARRIVED first.
+ */
+export function allowedNextOrderStatuses(current: OrderStatus, mode: ListingMode): OrderStatus[] {
+  return NEXT_ORDER_STATUSES[current].filter((next) =>
+    current !== 'CONFIRMED'
+    || (mode === 'IN_STOCK' ? next !== 'IN_TRANSIT' : next !== 'READY'));
+}
 
 /** Status a listing should have after a stock change. A deliberate INACTIVE is kept. */
 function stockStatus(current: ListingStatus, total: number, reserved: number): ListingStatus {
@@ -501,6 +520,14 @@ export class AdminService {
     if (!trim) {
       throw new NotFoundException('Trim not found');
     }
+    // The unique (trimId, mode) index also catches a concurrent create (P2002 -> 409)
+    const existing = await this.prisma.listing.findUnique({
+      where: { trimId_mode: { trimId: dto.trimId, mode: dto.mode } },
+      select: { id: true },
+    });
+    if (existing) {
+      throw new ConflictException('A listing already exists for this trim and mode; adjust its stock instead');
+    }
 
     const listing = await this.prisma.$transaction(async (tx) => {
       const created = await tx.listing.create({
@@ -830,15 +857,20 @@ export class AdminService {
     const { order, updatedOrder } = await this.prisma.$transaction(async (tx) => {
       // Lock the order so two concurrent status changes cannot both apply stock effects
       await tx.$queryRaw`SELECT id FROM "Order" WHERE id = ${id} FOR UPDATE`;
-      const order = await tx.order.findUnique({ where: { id } });
+      const order = await tx.order.findUnique({
+        where: { id },
+        include: { listing: { select: { mode: true } } },
+      });
       if (!order) {
         throw new NotFoundException('Order not found');
       }
-      if (order.status === newStatus) {
-        throw new BadRequestException(`Order is already ${newStatus}`);
-      }
-      if (TERMINAL_ORDER_STATUSES.includes(order.status)) {
-        throw new BadRequestException(`Order is ${order.status} and can no longer change status`);
+      const allowed = allowedNextOrderStatuses(order.status, order.listing.mode);
+      if (!allowed.includes(newStatus)) {
+        throw new ConflictException(
+          allowed.length
+            ? `Order cannot go from ${order.status} to ${newStatus} (allowed: ${allowed.join(', ')})`
+            : `Order is ${order.status} and can no longer change status`,
+        );
       }
 
       if (newStatus === 'DELIVERED' || newStatus === 'CANCELLED') {
@@ -1076,38 +1108,27 @@ export class AdminService {
         throw new BadRequestException('Offer already processed');
       }
 
-      // Check if listing exists for this trim+mode
-      let listing = await tx.listing.findFirst({
-        where: {
-          trimId: offer.trimId,
-          mode: offer.mode,
-        },
+      // Make sure the trim+mode listing exists. ON CONFLICT waits for a concurrent
+      // approval's insert instead of creating a duplicate listing.
+      await tx.$executeRaw`
+        INSERT INTO "Listing" ("id", "trimId", "mode", "publicPrice", "totalQuantity", "reservedQuantity", "status")
+        VALUES (gen_random_uuid(), ${offer.trimId}, ${offer.mode}::"ListingMode", ${dto.publicPrice}, 0, 0, 'OUT_OF_STOCK')
+        ON CONFLICT ("trimId", "mode") DO NOTHING`;
+      const { id: listingId } = await tx.listing.findUniqueOrThrow({
+        where: { trimId_mode: { trimId: offer.trimId, mode: offer.mode } },
+        select: { id: true },
       });
 
-      if (listing) {
-        listing = await lockListing(tx, listing.id);
-        const total = listing.totalQuantity + quantity;
-        listing = await tx.listing.update({
-          where: { id: listing.id },
-          data: {
-            publicPrice: dto.publicPrice,
-            totalQuantity: total,
-            status: stockStatus(listing.status, total, listing.reservedQuantity),
-          },
-        });
-      } else {
-        // Create new listing
-        listing = await tx.listing.create({
-          data: {
-            trimId: offer.trimId,
-            mode: offer.mode,
-            publicPrice: dto.publicPrice,
-            totalQuantity: quantity,
-            reservedQuantity: 0,
-            status: 'ACTIVE',
-          },
-        });
-      }
+      let listing = await lockListing(tx, listingId);
+      const total = listing.totalQuantity + quantity;
+      listing = await tx.listing.update({
+        where: { id: listing.id },
+        data: {
+          publicPrice: dto.publicPrice,
+          totalQuantity: total,
+          status: stockStatus(listing.status, total, listing.reservedQuantity),
+        },
+      });
 
       // Create ADD movement
       await tx.inventoryMovement.create({

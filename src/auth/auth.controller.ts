@@ -6,6 +6,7 @@ import { AuthService, REFRESH_COOKIE } from './auth.service';
 import { LoginDto } from './dto/auth.dto';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { CurrentUser } from './decorators/current-user.decorator';
+import { LoginRoute } from '../common/throttler.guard';
 
 @ApiTags('auth')
 @Controller('api/v1/auth')
@@ -17,6 +18,7 @@ export class AuthController {
   @Post('login')
   @HttpCode(HttpStatus.OK)
   @Throttle({ default: { ttl: 15 * 60_000, limit: 10 } })
+  @LoginRoute()
   @ApiOperation({ summary: 'Login user' })
   @ApiResponse({ status: 200, description: 'Login successful' })
   @ApiResponse({ status: 401, description: 'Invalid credentials' })

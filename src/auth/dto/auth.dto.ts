@@ -1,5 +1,6 @@
 import { IsEmail, IsString, MinLength, MaxLength, IsOptional, IsEnum } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { NormalizeEmail } from '../../common/normalize-email';
 
 export enum Role {
   BUYER = 'BUYER',
@@ -35,6 +36,7 @@ export class RegisterDto {
 
 export class LoginDto {
   @ApiProperty({ example: 'john@example.com' })
+  @NormalizeEmail()
   @IsEmail()
   email: string;
 

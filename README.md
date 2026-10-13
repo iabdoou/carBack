@@ -21,7 +21,7 @@ Environment variables (see `.env.example`):
 | Variable | Notes |
 |---|---|
 | `NODE_ENV` | `production` (enables secure cookies, disables Swagger) |
-| `DATABASE_URL` | Supabase transaction pooler, port 6543, `?pgbouncer=true` |
+| `DATABASE_URL` | Supabase transaction pooler, port 6543, `?pgbouncer=true`. `connection_limit=5&pool_timeout=20` are added unless the URL sets them |
 | `DIRECT_URL` | Supabase session pooler / direct connection (used by migrations) |
 | `JWT_SECRET` | 32+ random chars. The app refuses to start with a weak or previously leaked value |
 | `CORS_ORIGIN` | The frontend URL(s), comma-separated |
@@ -38,6 +38,14 @@ ADMIN_EMAIL=you@company.dz ADMIN_PASSWORD='a long passphrase' npm run admin:crea
 ```
 
 `npm run seed` refuses to run when `NODE_ENV=production`; never use it on real data.
+
+## Business rules
+
+- **Orders** only move forward: `CREATED -> CONFIRMED -> IN_TRANSIT -> ARRIVED -> READY -> DELIVERED`; a listing in stock goes `CONFIRMED -> READY`. Any non-final order can be `CANCELLED`; `DELIVERED` and `CANCELLED` are final (409 otherwise).
+- **Listings**: one per trim and mode. Approving more offers adds to its stock.
+- **Rentals** book calendar days (`YYYY-MM-DD`), both ends included: 13 -> 15 is 3 days, and day 15 is taken. A full timestamp is read as the Algerian date it falls on. Active rentals can be edited, completed or cancelled (`PATCH /rentals/:id`); a car with rental history cannot be deleted (set it to `MAINTENANCE`).
+- **Emails** are stored lower-case; login is case-insensitive.
+- **Login rate limits**: 10 attempts / 15 min per IP + email, and 30 / 15 min per IP across all emails.
 
 ## Tests
 

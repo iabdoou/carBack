@@ -53,9 +53,8 @@ export class AuthService {
   }
 
   async login(dto: LoginDto) {
-    const user = await this.prisma.user.findFirst({
-      where: { email: { equals: dto.email.trim(), mode: 'insensitive' } },
-    });
+    // LoginDto normalizes the email, and stored emails are normalized too
+    const user = await this.prisma.user.findUnique({ where: { email: dto.email } });
 
     const isPasswordValid = await bcrypt.compare(dto.password, user?.passwordHash ?? DUMMY_HASH);
     if (!user || !isPasswordValid) {

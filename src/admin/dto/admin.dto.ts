@@ -1,6 +1,7 @@
 import { IsString, IsNumber, IsInt, IsOptional, IsEnum, IsEmail, Min, Max, MinLength, MaxLength, IsDateString, IsUUID, NotEquals } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
+import { NormalizeEmail } from '../../common/normalize-email';
 
 // ============ ENUMS ============
 
@@ -42,6 +43,7 @@ export class CreateBuyerDto {
   name: string;
 
   @ApiProperty({ example: 'ahmed@client.dz' })
+  @NormalizeEmail()
   @IsEmail()
   email: string;
 
@@ -70,6 +72,7 @@ export class UpdateBuyerDto {
 
   @ApiPropertyOptional({ example: 'ahmed@client.dz' })
   @IsOptional()
+  @NormalizeEmail()
   @IsEmail()
   email?: string;
 

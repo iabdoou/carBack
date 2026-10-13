@@ -142,7 +142,8 @@ model Listing {
   movements InventoryMovement[]
 
   @@index([status])
-  @@index([trimId, mode])
+  // One listing per trim and mode: offers for the same car add to its stock
+  @@unique([trimId, mode])
 }
 
 model InventoryMovement {
@@ -215,12 +216,14 @@ model RentalCar {
 // ─── LOCATION ─────────────────────────────────────────────
 model Rental {
   id          String       @id @default(cuid())
-  car         RentalCar    @relation(fields: [carId], references: [id], onDelete: Cascade)
+  // Restrict: deleting a car must not silently erase its rental (revenue) history
+  car         RentalCar    @relation(fields: [carId], references: [id], onDelete: Restrict)
   carId       String
   clientName  String
   clientPhone String
-  startDate   DateTime
-  endDate     DateTime
+  // Calendar days, both inclusive: 13 -> 15 is a 3-day rental
+  startDate   DateTime     @db.Date
+  endDate     DateTime     @db.Date
   status      RentalStatus @default(ACTIVE)
   totalPrice  Int
   notes       String?

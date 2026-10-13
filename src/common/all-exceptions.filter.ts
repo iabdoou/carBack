@@ -7,6 +7,11 @@ const PRISMA_ERRORS: Record<string, { status: number; message: string }> = {
   P2002: { status: HttpStatus.CONFLICT, message: 'A record with this value already exists' },
   P2003: { status: HttpStatus.CONFLICT, message: 'This record is still referenced by other data and cannot be changed or deleted' },
   P2025: { status: HttpStatus.NOT_FOUND, message: 'Record not found' },
+  // Database busy: no pooled connection in time / transaction timed out. Safe to retry.
+  P2024: { status: HttpStatus.SERVICE_UNAVAILABLE, message: 'The server is busy, please retry' },
+  P2028: { status: HttpStatus.SERVICE_UNAVAILABLE, message: 'The server is busy, please retry' },
+  // Write conflict or deadlock between concurrent transactions
+  P2034: { status: HttpStatus.CONFLICT, message: 'The record was changed by another request, please retry' },
 };
 
 /** Maps known errors to clean HTTP responses and never leaks internals on 500. */
@@ -26,6 +31,10 @@ export class AllExceptionsFilter implements ExceptionFilter {
 
     if (exception instanceof Prisma.PrismaClientKnownRequestError && PRISMA_ERRORS[exception.code]) {
       const { status, message } = PRISMA_ERRORS[exception.code];
+      if (status === HttpStatus.SERVICE_UNAVAILABLE) {
+        this.logger.warn(`${req.method} ${req.url}: ${exception.code} ${exception.message}`);
+        res.setHeader('Retry-After', '2');
+      }
       res.status(status).json({ statusCode: status, message });
       return;
     }

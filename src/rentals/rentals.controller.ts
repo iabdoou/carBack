@@ -16,7 +16,13 @@ import { RentalsService } from './rentals.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
-import { CreateRentalCarDto, UpdateRentalCarDto, CreateRentalDto, CheckAvailabilityDto } from './dto/rentals.dto';
+import {
+  CreateRentalCarDto,
+  UpdateRentalCarDto,
+  CreateRentalDto,
+  UpdateRentalDto,
+  CheckAvailabilityDto,
+} from './dto/rentals.dto';
 
 @ApiTags('rentals')
 @Controller('api/v1/rentals')
@@ -116,5 +122,26 @@ export class RentalsController {
   @ApiResponse({ status: 201, description: 'Rental booking created' })
   async createRental(@Body() dto: CreateRentalDto) {
     return this.rentalsService.createRental(dto);
+  }
+
+  @Get(':id')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN')
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get a rental booking (Admin only)' })
+  @ApiResponse({ status: 404, description: 'Rental not found' })
+  async findRental(@Param('id') id: string) {
+    return this.rentalsService.findRental(id);
+  }
+
+  @Patch(':id')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN')
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Edit, complete or cancel an active rental (Admin only)' })
+  @ApiResponse({ status: 200, description: 'Rental updated' })
+  @ApiResponse({ status: 409, description: 'Dates already booked, or the rental is already closed' })
+  async updateRental(@Param('id') id: string, @Body() dto: UpdateRentalDto) {
+    return this.rentalsService.updateRental(id, dto);
   }
 }
